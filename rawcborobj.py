@@ -2,7 +2,7 @@
 import copy
 
 class rawcborobj:
-    def __init__(self, data, lazy=False, tag=None, cursor=0):
+    def __init__(self, data, lazy=False, tag=None, cursor=0, debug=False):
         self.data = [data]
         self.lazy = lazy
         self.length = -1
@@ -12,6 +12,7 @@ class rawcborobj:
         self.next_obj_cache_pre = {}
         self.indef_array_length_cache = {}
         self.tag_cache = {}
+        self.debug = debug
 
         self.reset_state()
 
@@ -109,6 +110,12 @@ class rawcborobj:
         if self.cursor in self.tag_cache:
             self.tag = self.tag_cache[self.cursor]
 
+        if self.debug and self.tag is not None:
+            print(f"found TAG: {self.tag} (0x{self.tag:04x})")
+        if self.debug:
+            print(f"next object is 0x{x:02x}")
+
+
         if x >= 0x00 and x <= 0x17:
             self.length = 1
             self.value = x
@@ -130,11 +137,15 @@ class rawcborobj:
             array_length = x-0x40
             self.value  = self.rel_data(1, array_length)
             self.remainder = self.rel_copy_at(1+array_length)
+            if self.debug:
+                print("read bytestring ", self.rel_data(1, array_length).hex())
         elif x >= 0x58 and x <= 0x5e:
             self.length = 1 << (x-0x58)
             array_length = int.from_bytes(self.rel_data(1, self.length), "big")
             self.value = self.rel_data(1+self.length, array_length)
             self.remainder = self.rel_copy_at(1+self.length+array_length)
+            if self.debug:
+                print("read bytestring ", self.rel_data(1+self.length, array_length).hex())
         elif x== 0x5f:
             self.length = 1
             self.array_length = 0
@@ -168,6 +179,8 @@ class rawcborobj:
         elif x >= 0x80 and x <= 0x97:
             self.length = 1
             self.array_length = x-0x80
+            if self.debug:
+                print(f"array found @ {self.cursor}, length = {self.array_length}")
             self.children = self.rel_copy_at(1)
             self.children.read_header()
             self.remainder = copy.copy(self.children)
@@ -178,7 +191,9 @@ class rawcborobj:
         elif x >= 0x98 and x <= 0x9A:
             self.length = 1 << (x-0x98)
             self.array_length = int.from_bytes(self.rel_data(1, self.length), "big")
-            self.children = self.rel_copy_at(1+self.length+self.array_length)
+            if self.debug:
+                print(f"array found @ {self.cursor}, length = {self.array_length}")
+            self.children = self.rel_copy_at(1+self.length)
             self.children.read_header()
             self.remainder = copy.copy(self.children)
             if not self._restore_end_pos():
@@ -250,7 +265,8 @@ class rawcborobj:
             self.stop = True
             self.remainder = self.rel_copy_at(1)
         else:
-            raise Exception(f"Not implemented: {x} = 0x{x:02x}")
+            surrounding_bytes = "..." + self.data[0][self.cursor-16:self.cursor].hex() + "\x1b[31m" + self.data[0][self.cursor:self.cursor+16].hex() + "\x1b[0m..."
+            raise Exception(f"Not implemented: {x} = 0x{x:02x} @ {self.cursor} {surrounding_bytes}")
 
         self.initialized = True
 
