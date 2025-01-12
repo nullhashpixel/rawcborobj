@@ -206,6 +206,7 @@ class rawcborobj:
             self.children = self.rel_copy_at(1)
             self.children.read_header()
             self.remainder = copy.copy(self.children)
+            self.indefinite_length = True
             if not self._restore_end_pos():
                 while not self.remainder.stop:
                     self.remainder.next()
@@ -279,6 +280,21 @@ class rawcborobj:
         if name == "value":
             if not self.initialized:
                 self.read_header()
+            if not self.map and self.array_length is not None:
+                length = len(self)
+                res = []
+                for i in range(length):
+                    res.append(self[i].value)
+                return res
+            elif self.map and self.array_length is not None:
+                keys = self.keys()
+                res = {}
+                for key in keys:
+                    res[key] = self[key].value
+                return res
+
+
+
         return object.__getattribute__(self, name)
 
     def __getitem__(self, key):
