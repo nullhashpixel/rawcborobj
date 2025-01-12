@@ -97,7 +97,15 @@ class rawcborobj:
 
         x = data[self.cursor]
 
-        if x >= 0xd8 and x <= 0xda:
+        if x >= 0xc0 and x < 0xd8:
+            self.length = 1
+            tag = x-0xc0
+            self.tag = tag
+            self.pre_tag_cursor = self.cursor 
+            self.cursor += 1
+            self.tag_cache[self.cursor] = self.tag
+            x = data[self.cursor]
+        elif x >= 0xd8 and x <= 0xda:
             self.length = 1 << (x-0xD8)
             tag = int.from_bytes(self.rel_data(1, self.length), "big")
             self.tag = tag
