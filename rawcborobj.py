@@ -13,6 +13,7 @@ class rawcborobj:
         self.indef_array_length_cache = {}
         self.tag_cache = {}
         self.debug = debug
+        self.end_cursor = None
 
         self.reset_state()
 
@@ -24,7 +25,6 @@ class rawcborobj:
         self.value = None
         self.length = None
         self.array_length = None
-        self.remainder = None
         self.stop = False
         self.map = False
         self.undefined = False
@@ -32,19 +32,19 @@ class rawcborobj:
         self.children = None
         self.indefinite_length = False
         self.pre_tag_cursor=None
+        self.pre_tag_end_cursor=None
 
     # cache of object end positions for objects starting at cursor
     def _cache_end_pos(self):
-        self.next_obj_cache[self.cursor] = self.remainder.cursor
-        self.next_obj_cache_pre[self.cursor] = self.remainder.pre_tag_cursor
+        self.next_obj_cache[self.cursor] = self.end_cursor
+        self.next_obj_cache_pre[self.cursor] = self.pre_tag_end_cursor
 
     # move remainder pointer to end position of object or return False if not in cache
     # if not in cache, object specific transversal code is needed
     def _restore_end_pos(self):
         if self.cursor in self.next_obj_cache:
-            self.remainder.pre_tag_cursor = self.next_obj_cache_pre[self.cursor]
-            self.remainder.set_cursor(self.next_obj_cache[self.cursor])
-            #self.remainder.tag = self.tag_cache.get(self.cursor)
+            self.pre_tag_end_cursor = self.next_obj_cache_pre[self.cursor]
+            self.end_cursor = self.next_obj_cache[self.cursor]
             return True
         return False
 
@@ -70,8 +70,8 @@ class rawcborobj:
         return self
 
     def next(self):
-        if self.remainder is not None:
-            self.cursor = self.remainder.cursor
+        if self.end_cursor is not None:
+            self.cursor = self.end_cursor
             self.read_header()
         else:
             raise Exception("invalid")
@@ -88,7 +88,7 @@ class rawcborobj:
 
         self.reset_state()
         data = self.data[0]
-        if len(data) < 1:
+        if data is None or len(data) < 1:
             return None
 
         if self.cursor >= len(data):
@@ -127,55 +127,47 @@ class rawcborobj:
         if x >= 0x00 and x <= 0x17:
             self.length = 1
             self.value = x
-            self.remainder = self.rel_copy_at(1)
+            self.end_cursor = self.cursor + 1
         elif x >= 0x18 and x <= 0x1b:
             self.length = 1 << (x-0x18)
             self.value = int.from_bytes(self.rel_data(1, self.length), "big")
-            self.remainder = self.rel_copy_at(1+self.length)
+            self.end_cursor = self.cursor + 1+self.length
         elif x >= 0x20 and x < 0x37:
             self.length = 1
             self.value = -1-(x-0x20)
-            self.remainder = self.rel_copy_at(1)
+            self.end_cursor = self.cursor + 1
         elif x >= 0x38 and x <= 0x3b:
             self.length = 1 << (x-0x38)
             self.value = -1-int.from_bytes(self.rel_data(1, self.length), "big")
-            self.remainder = self.rel_copy_at(1+self.length)
+            self.end_cursor = self.cursor + 1+self.length
         elif x >= 0x40 and x <= 0x57:
             self.length = 1
             array_length = x-0x40
             self.value  = self.rel_data(1, array_length)
-            self.remainder = self.rel_copy_at(1+array_length)
+            self.end_cursor = self.cursor + 1+array_length
             if self.debug:
                 print("read bytestring ", self.rel_data(1, array_length).hex())
         elif x >= 0x58 and x <= 0x5e:
             self.length = 1 << (x-0x58)
             array_length = int.from_bytes(self.rel_data(1, self.length), "big")
             self.value = self.rel_data(1+self.length, array_length)
-            self.remainder = self.rel_copy_at(1+self.length+array_length)
+            self.end_cursor = self.cursor + 1+self.length+array_length
             if self.debug:
                 print("read bytestring ", self.rel_data(1+self.length, array_length).hex())
-        #elif x== 0x5f:
-        #    self.length = 1
-        #    self.array_length = 0
-        #    self.indefinite_length = True
-        #    self.remainder = self.rel_copy_at(1)
-        #    while not self.remainder.stop:
-        #        self.remainder.next()
-        #        self.array_length += 1
-        #    self.remainder.next()
         elif x== 0x5f:
             self.length = 1
             self.array_length = 0
             self.children = self.rel_copy_at(1)
             self.children.read_header()
-            self.remainder = copy.copy(self.children)
+            remainder = copy.copy(self.children)
             self.indefinite_length = True
             if not self._restore_end_pos():
-                while not self.remainder.stop:
-                    self.remainder.next()
+                while not remainder.stop:
+                    remainder.next()
                     self.array_length += 1
                 # move 1 object behind the stop marker (0xff), but don't count it towards the array length
-                self.remainder.next()
+                remainder.next()
+                self.end_cursor = remainder.cursor
                 self._cache_end_pos()
                 self._cache_indef_array_length()
             else:
@@ -184,23 +176,24 @@ class rawcborobj:
             self.length = 1
             self.array_length = x-0x60
             self.value  = self.rel_data(1, self.array_length).decode('utf-8')
-            self.remainder = self.rel_copy_at(1+self.array_length)
+            self.end_cursor = self.cursor + 1+self.array_length
         elif x >= 0x78 and x <= 0x7e:
             self.length = 1 << (x-0x78)
             self.array_length = int.from_bytes(self.rel_data(1, self.length), "big")
             self.value = self.rel_data(1+self.length, self.array_length).decode('utf-8')
-            self.remainder = self.rel_copy_at(1+self.length+self.array_length)
+            self.end_cursor = self.cursor + 1+self.length+self.array_length
         elif x== 0x7f:
             self.length = 1
             self.array_length = 0
             self.indefinite_length = True
             self.children = self.rel_copy_at(1)
             self.children.read_header()
-            self.remainder = copy.copy(self.children)
-            while not self.remainder.stop:
-                self.remainder.next()
+            remainder = copy.copy(self.children)
+            while not remainder.stop:
+                remainder.next()
                 self.array_length += 1
-            self.remainder.next()
+            remainder.next()
+            self.end_cursor = remainder.cursor
         elif x >= 0x80 and x <= 0x97:
             self.length = 1
             self.array_length = x-0x80
@@ -208,10 +201,11 @@ class rawcborobj:
                 print(f"array found @ {self.cursor}, length = {self.array_length}")
             self.children = self.rel_copy_at(1)
             self.children.read_header()
-            self.remainder = copy.copy(self.children)
+            remainder = copy.copy(self.children)
             if not self._restore_end_pos():
                 for i in range(self.array_length):
-                    self.remainder.next()
+                    remainder.next()
+                self.end_cursor = remainder.cursor
                 self._cache_end_pos()
         elif x >= 0x98 and x <= 0x9A:
             self.length = 1 << (x-0x98)
@@ -220,24 +214,26 @@ class rawcborobj:
                 print(f"array found @ {self.cursor}, length = {self.array_length}")
             self.children = self.rel_copy_at(1+self.length)
             self.children.read_header()
-            self.remainder = copy.copy(self.children)
+            remainder = copy.copy(self.children)
             if not self._restore_end_pos():
                 for i in range(self.array_length):
-                    self.remainder.next()
+                    remainder.next()
+                self.end_cursor = remainder.cursor
                 self._cache_end_pos()
         elif x== 0x9f:
             self.length = 1
             self.array_length = 0
             self.children = self.rel_copy_at(1)
             self.children.read_header()
-            self.remainder = copy.copy(self.children)
+            remainder = copy.copy(self.children)
             self.indefinite_length = True
             if not self._restore_end_pos():
-                while not self.remainder.stop:
-                    self.remainder.next()
+                while not remainder.stop:
+                    remainder.next()
                     self.array_length += 1
                 # move 1 object behind the stop marker (0xff), but don't count it towards the array length
-                self.remainder.next()
+                remainder.next()
+                self.end_cursor = remainder.cursor
                 self._cache_end_pos()
                 self._cache_indef_array_length()
             else:
@@ -248,48 +244,41 @@ class rawcborobj:
             self.map = True
             self.children = self.rel_copy_at(1)
             self.children.read_header()
-            self.remainder = copy.copy(self.children)
+            remainder = copy.copy(self.children)
             for i in range(self.array_length*2):
-                self.remainder.next()
+                remainder.next()
+            self.end_cursor = remainder.cursor
         elif x >= 0xB8 and x <= 0xBA:
             self.length = 1 << (x-0xB8)
             self.array_length = int.from_bytes(self.rel_data(1, self.length), "big")
             self.map = True
             self.children = self.rel_copy_at(1+self.length)
             self.children.read_header()
-            self.remainder = copy.copy(self.children)
+            remainder = copy.copy(self.children)
             for i in range(self.array_length*2):
-                self.remainder.next()
-        #elif x >= 0xd8 and x <= 0xda:
-        #    self.length = 1 << (x-0xD8)
-        #    tag = int.from_bytes(self.rel_data(1, self.length), "big")
-        #    pre_tag_cursor = self.cursor
-        #    self.move(1+self.length)
-        #    self.tag = tag
-        #    self.pre_tag_cursor = pre_tag_cursor
-        #    self.remainder.read_header()
-        #    #print("SET ", self.tag, self.pre_tag_cursor)
+                remainder.next()
+            self.end_cursor = remainder.cursor
         elif x == 0xf4:
             self.length = 1
             self.value = False
-            self.remainder = self.rel_copy_at(1)
+            self.end_cursor = self.cursor + 1
         elif x == 0xf5:
             self.length = 1
             self.value = True
-            self.remainder = self.rel_copy_at(1)
+            self.end_cursor = self.cursor + 1
         elif x == 0xf6:
             self.length = 1
             self.value = None
-            self.remainder = self.rel_copy_at(1)
+            self.end_cursor = self.cursor + 1
         elif x == 0xf7:
             self.length = 1
             self.value = None
             self.undefined = True
-            self.remainder = self.rel_copy_at(1)
+            self.end_cursor = self.cursor + 1
         elif x == 0xff:
             self.length = 1
             self.stop = True
-            self.remainder = self.rel_copy_at(1)
+            self.end_cursor = self.cursor + 1
         else:
             surrounding_bytes = "..." + self.data[0][self.cursor-16:self.cursor].hex() + "\x1b[31m" + self.data[0][self.cursor:self.cursor+16].hex() + "\x1b[0m..."
             raise Exception(f"Not implemented: {x} = 0x{x:02x} @ {self.cursor} {surrounding_bytes}")
@@ -317,8 +306,6 @@ class rawcborobj:
                 for key in keys:
                     res[key] = self[key].value
                 return res
-
-
 
         return object.__getattribute__(self, name)
 
@@ -364,11 +351,12 @@ class rawcborobj:
                 raise Exception("KeyError")
 
     def replaced_with(self, value):
-        new_data = self.data[0][:self.cursor] + value.data[0] + self.data[0][self.remainder.cursor:]
-        if self.pre_tag_cursor is not None and  self.pre_tag_cursor != self.cursor:
-            self.cursor = self.pre_tag_cursor
-        result = rawcborobj([])
-        result.data = [new_data]
+        result = rawcborobj(None)
+        result.data = [
+                self.data[0][:self.cursor] +
+                (bytes.fromhex(value) if type(value) is str else value.data[0]) +
+                self.data[0][self.end_cursor:]
+                ]
         result.read_header()
         return result
 
@@ -402,10 +390,10 @@ class rawcborobj:
     def bytes(self):
         if self.tag is not None:
             tag_bytes = self.encode_tag(self.tag)
-            return tag_bytes + self.data[0][self.cursor:(self.remainder.pre_tag_cursor if self.remainder.pre_tag_cursor is not None else self.remainder.cursor) if self.remainder is not None else None]
+            return tag_bytes + self.data[0][self.cursor:(self.pre_tag_end_cursor if self.pre_tag_end_cursor is not None else self.end_cursor) if self.end_cursor is not None else None]
 
         else:
-            return self.data[0][self.cursor:self.remainder.cursor if self.remainder is not None else None]
+            return self.data[0][self.cursor:self.end_cursor if self.end_cursor is not None else None]
 
     def encoded(self):
         return self.bytes().hex()

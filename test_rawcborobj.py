@@ -97,12 +97,25 @@ class TestRawCBORObj(unittest.TestCase):
         c = rawcborobj(bytes.fromhex("c200"))
         self.assertEqual(c.tag, 2)
 
-    def test_set1(self):
+    def test_replace_int(self):
 
         c = rawcborobj(bytes.fromhex("9f010101ff"))
 
         # should keep original object invariant and replace the content in the copy c_new
-        c_new = c[1].replaced_with(rawcborobj(bytes.fromhex("07")))
+        c_new  = c[1].replaced_with(rawcborobj(bytes.fromhex("07")))
+        c_new2 = c[1].replaced_with("07") # =hex
 
         self.assertEqual(c[1].value, 1)
         self.assertEqual(c_new[1].value, 7)
+        self.assertEqual(c_new2[1].value, 7)
+
+    def test_replace_array_with_map(self):
+        c = rawcborobj(bytes.fromhex("9f0182020201ff"))
+        c_new = c[1].replaced_with("a10304")
+        self.assertEqual(c_new.encoded(), "9f01a1030401ff")
+        c_new_2 = c_new[1].replaced_with("820202")
+
+
+
+
+
