@@ -96,3 +96,13 @@ class TestRawCBORObj(unittest.TestCase):
     def test_tags1(self):
         c = rawcborobj(bytes.fromhex("c200"))
         self.assertEqual(c.tag, 2)
+
+    def test_set1(self):
+
+        c = rawcborobj(bytes.fromhex("9f010101ff"))
+
+        # should keep original object invariant and replace the content in the copy c_new
+        c_new = c[1].replaced_with(rawcborobj(bytes.fromhex("07")))
+
+        self.assertEqual(c[1].value, 1)
+        self.assertEqual(c_new[1].value, 7)

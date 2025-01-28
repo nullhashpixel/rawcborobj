@@ -363,6 +363,14 @@ class rawcborobj:
                     x.next()
                 raise Exception("KeyError")
 
+    def replaced_with(self, value):
+        new_data = self.data[0][:self.cursor] + value.data[0] + self.data[0][self.remainder.cursor:]
+        if self.pre_tag_cursor is not None and  self.pre_tag_cursor != self.cursor:
+            self.cursor = self.pre_tag_cursor
+        result = rawcborobj([])
+        result.data = [new_data]
+        result.read_header()
+        return result
 
     def keys(self):
         if self.map and self.array_length is not None:
