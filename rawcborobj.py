@@ -154,15 +154,32 @@ class rawcborobj:
             self.remainder = self.rel_copy_at(1+self.length+array_length)
             if self.debug:
                 print("read bytestring ", self.rel_data(1+self.length, array_length).hex())
+        #elif x== 0x5f:
+        #    self.length = 1
+        #    self.array_length = 0
+        #    self.indefinite_length = True
+        #    self.remainder = self.rel_copy_at(1)
+        #    while not self.remainder.stop:
+        #        self.remainder.next()
+        #        self.array_length += 1
+        #    self.remainder.next()
         elif x== 0x5f:
             self.length = 1
             self.array_length = 0
+            self.children = self.rel_copy_at(1)
+            self.children.read_header()
+            self.remainder = copy.copy(self.children)
             self.indefinite_length = True
-            self.remainder = self.rel_copy_at(1)
-            while not self.remainder.stop:
+            if not self._restore_end_pos():
+                while not self.remainder.stop:
+                    self.remainder.next()
+                    self.array_length += 1
+                # move 1 object behind the stop marker (0xff), but don't count it towards the array length
                 self.remainder.next()
-                self.array_length += 1
-            self.remainder.next()
+                self._cache_end_pos()
+                self._cache_indef_array_length()
+            else:
+                self._restore_indef_array_length()
         elif x >= 0x60 and x <= 0x77:
             self.length = 1
             self.array_length = x-0x60
